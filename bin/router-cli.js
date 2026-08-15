@@ -246,6 +246,9 @@ function renameCommand(args, opts) {
   if (!/^[0-9A-F]{2}(-[0-9A-F]{2}){5}$/.test(mac)) {
     errorAndExit(`MAC inválida: ${mac} (usa formato XX-XX-XX-XX-XX-XX)`)
   }
+  if (!/^[A-Za-z0-9_-]+$/.test(alias)) {
+    errorAndExit(`Nombre inválido: "${alias}". Solo se permiten letras, números, guiones y guiones bajos (sin espacios)`)
+  }
 
   withRouter(opts, async (client) => {
     const status = await client.getStatus()
