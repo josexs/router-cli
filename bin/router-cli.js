@@ -303,11 +303,22 @@ function wifiCommand(opts) {
       target = band.key
     }
 
-    const band = bands.find((b) => b.key === target || b.label.toLowerCase().includes(target.toLowerCase()))
+    const aliases = { '2g': 'wireless_2g', '5g': 'wireless_5g', 'guest2g': 'guest_2g', 'guest5g': 'guest_5g' }
+    const resolved = aliases[target] || target
+    const band = bands.find((b) => b.key === resolved)
     if (!band) errorAndExit(`Banda desconocida: ${target} (usa: 2g, 5g, guest2g, guest5g)`)
     if ((band.state === 'on') === enable) {
       console.log(`\n  ${c('dim', `${band.label} ya está ${action}`)}`)
       return
+    }
+
+    if (!opts.yes) {
+      const verb = action === 'on' ? 'Encender' : 'Apagar'
+      const ans = await prompt(`\n  ⚠️  ${verb} ${c('bold', band.label)}?\n  ${c('dim', 'Esto afectará a los dispositivos conectados a esa banda.')}\n  ${c('dim', '(y/N)')} `)
+      if (!ans || !['y', 'Y', 'yes'].includes(ans.trim())) {
+        console.log(`\n  ${c('yellow', 'Cancelado')}`)
+        return
+      }
     }
 
     console.log(`  ${c('dim', '→')} ${action === 'on' ? 'encendiendo' : 'apagando'} ${band.label}...`)
@@ -412,6 +423,12 @@ function unblockCommand(args, opts) {
       return
     }
 
+    const ans = await prompt(`\n  Desbloquear "${c('bold', dev.name || mac)}" (${mac})?\n  ${c('dim', 'El dispositivo recuperará el acceso a Internet.')}\n  ${c('dim', '(y/N)')} `)
+    if (!ans || !['y', 'Y', 'yes'].includes(ans.trim())) {
+      console.log(`\n  ${c('yellow', 'Cancelado')}`)
+      return
+    }
+
     await client.unblockDevice(mac)
     console.log(`\n  ${c('green', '✅')} Dispositivo desbloqueado: ${c('bold', dev.name || mac)}`)
     console.log()
@@ -434,23 +451,28 @@ USO:
   router <comando> [opciones]
 
 COMANDOS:
-  status                Estado general del router
-  clients               Lista de dispositivos conectados
-  identify              Cruzar MAC con Home Assistant para identificar dispositivos
-  export [--output f]   Exportar clientes en JSON (stdout o archivo)
-  wifi [status]         Estado de las bandas WiFi
+  status                Estado general del router (solo lectura)
+  clients               Lista de dispositivos conectados (solo lectura)
+  identify              Cruzar MAC con Home Assistant (solo lectura)
+  export [--output f]   Exportar clientes a JSON (solo lectura; stdout o archivo)
+  wifi [status]         Estado de las bandas WiFi (solo lectura)
   wifi on|off           Encender/apagar una banda (pide banda o usa --band)
-  rename <MAC> <nombre> Renombrar un dispositivo (ej: router rename E4-AE-E4-5A-E2-4B EnchufeCocina)
-  block <MAC>            Bloquear un dispositivo (pide confirmación)
-  unblock <MAC>          Desbloquear un dispositivo de la lista de denegados
+  rename <MAC> <nombre> Renombrar un dispositivo
+  block <MAC>           Bloquear un dispositivo (pierde Internet; pide confirmación)
+  unblock <MAC>         Desbloquear un dispositivo de la lista de denegados
   reboot                Reiniciar el router
+
+SEGURIDAD:
+  Todos los comandos que MODIFICAN (wifi on/off, rename, block, unblock, reboot)
+  piden confirmación (y/N) antes de ejecutar. Usa -y/--yes solo si confías.
 
 OPCIONES:
   --host <host>         IP o hostname del router (default: ROUTER_HOST o 192.168.0.1)
   --password <pass>     Contraseña de admin (o ROUTER_PASSWORD)
   --username <user>     Usuario (default: vacío — el AX3000 suele no tener)
   --band <band>         Banda para wifi on/off: 2g, 5g, guest2g, guest5g
-  -y, --yes             Confirmar reboot sin preguntar
+  --output <file>       Archivo de salida para export
+  -y, --yes             Omitir confirmación (para wifi on/off y reboot)
   -h, --help            Muestra esta ayuda
   -v, --version         Versión
 
