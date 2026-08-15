@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline'
 import { TplinkRouterClient, TplinkRouterError } from '../src/tplink.js'
+import { fetchHaDevices, findHaName } from '../src/ha.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PKG = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf8'))
@@ -168,6 +169,101 @@ function clientsCommand(opts) {
   })
 }
 
+function identifyCommand(opts) {
+  withRouter(opts, async (client) => {
+    console.log(`  ${c('dim', '→')} consultando clientes y Home Assistant...`)
+
+    const [status, ha] = await Promise.all([client.getStatus(), fetchHaDevices()])
+    const devices = status.devices || []
+
+    if (devices.length === 0) {
+      console.log(`\n  ${c('yellow', 'No hay clientes conectados')}`)
+      return
+    }
+
+    if (!ha.ok) {
+      console.log(`\n  ${c('yellow', `⚠️  ${ha.reason}`)}`)
+      console.log(`  ${c('dim', 'Solo se mostrará el fabricante por MAC (OUI)')}\n`)
+    }
+
+    const sorted = [...devices].sort((a, b) => {
+      const ta = a.type === 'wired' ? 0 : 1
+      const tb = b.type === 'wired' ? 0 : 1
+      return ta - tb || (a.hostname || '').localeCompare(b.hostname || '')
+    })
+
+    let matched = 0
+    let unnamed = 0
+    console.log(`\n  ${c('dim', `${sorted.length} dispositivos conectados — cruce con HA`)}\n`)
+    for (const d of sorted) {
+      const tag = d.type === 'wired' ? c('cyan', 'cable') : d.type === 'guest' ? c('yellow', 'guest') : c('magenta', 'wifi ')
+      const name = d.hostname || d.macaddr
+      const isGeneric = !d.hostname || /^(lwip0|network device|android|iphone|-+)$/i.test(d.hostname)
+
+      const haMatch = findHaName(ha.devices, d.macaddr)
+      if (haMatch) matched++
+
+      let suggestion = ''
+      if (haMatch && isGeneric) {
+        suggestion = ` ${c('green', '→')} ${c('green', haMatch.name)} ${c('dim', `(HA: ${haMatch.macaddress_src || 'mac'})`)}`
+        unnamed++
+      } else if (haMatch) {
+        suggestion = ` ${c('dim', `· ${haMatch.name}`)}`
+      }
+
+      const mark = isGeneric ? c('yellow', '•') : ' '
+      console.log(`  ${mark} [${tag}] ${c('white', (name.length > 24 ? name.slice(0, 22) + '…' : name).padEnd(24))} ${c('dim', (d.ipaddr || '').padEnd(16))} ${c('dim', d.macaddr)}${suggestion}`)
+    }
+
+    console.log()
+    if (ha.ok) {
+      console.log(`  ${c('dim', `${matched} identificados por HA | ${unnamed} sin nombre con sugerencia`)}`)
+    }
+    console.log(`  ${c('dim', 'Usa: router rename <MAC> <nombre>')}`)
+    console.log()
+  })
+}
+
+function exportCommand(opts) {
+  withRouter(opts, async (client) => {
+    console.log(`  ${c('dim', '→')} exportando clientes...`)
+
+    const [firmware, status] = await Promise.all([client.getFirmware(), client.getStatus()])
+    const devices = (status.devices || []).map((d) => ({
+      name: d.hostname || null,
+      mac: d.macaddr,
+      ip: d.ipaddr || null,
+      type: d.type || null,
+      signal: d.signal ?? null,
+      downSpeed: d.downSpeed ?? null,
+      upSpeed: d.upSpeed ?? null,
+      onlineTime: d.onlineTime ?? null,
+      trafficUsed: d.trafficUsed ?? null,
+    }))
+
+    const payload = {
+      router: {
+        model: firmware.model || null,
+        firmware: firmware.firmwareVersion || null,
+        lanIp: status.lan_ipv4_ipaddr || null,
+        wanIp: status.wan_ipv4_ipaddr || null,
+      },
+      exportedAt: new Date().toISOString(),
+      clients: devices,
+    }
+
+    const json = JSON.stringify(payload, null, 2)
+    if (opts.output && opts.output !== '-') {
+      const { writeFileSync } = await import('node:fs')
+      writeFileSync(opts.output, json + '\n')
+      console.log(`\n  ${c('green', '✅')} Exportado a ${c('bold', opts.output)} (${devices.length} clientes)`)
+    } else {
+      process.stdout.write(json + '\n')
+    }
+    console.log()
+  })
+}
+
 function wifiCommand(opts) {
   const action = opts.action || 'status'
   withRouter(opts, async (client) => {
@@ -272,6 +368,56 @@ function renameCommand(args, opts) {
   })
 }
 
+function blockCommand(args, opts) {
+  const mac = (args[0] || '').toUpperCase()
+  if (!mac || !/^[0-9A-F]{2}(-[0-9A-F]{2}){5}$/.test(mac)) {
+    errorAndExit('Uso: router block <MAC> (ej: router block E4-AE-E4-5A-63-D0)')
+  }
+
+  withRouter(opts, async (client) => {
+    const status = await client.getStatus()
+    const dev = (status.devices || []).find((d) => d.macaddr === mac)
+    if (!dev) {
+      console.log(`\n  ${c('yellow', `Dispositivo ${mac} no encontrado entre los conectados`)}`)
+      return
+    }
+
+    const ans = await prompt(`\n  ⚠️  Bloquear "${c('bold', dev.hostname || mac)}" (${mac})?\n  ${c('dim', 'Se añadirá a la lista de denegados y perderá Internet.')}\n  ${c('dim', '(y/N)')} `)
+    if (!ans || !['y', 'Y', 'yes'].includes(ans.trim())) {
+      console.log(`\n  ${c('yellow', 'Cancelado')}`)
+      return
+    }
+
+    await client.blockDevice(mac)
+    console.log(`\n  ${c('green', '✅')} Dispositivo bloqueado. Para desbloquear: router unblock ${mac}`)
+    console.log()
+  })
+}
+
+function unblockCommand(args, opts) {
+  const mac = (args[0] || '').toUpperCase()
+  if (!mac || !/^[0-9A-F]{2}(-[0-9A-F]{2}){5}$/.test(mac)) {
+    errorAndExit('Uso: router unblock <MAC> (ej: router unblock E4-AE-E4-5A-63-D0)')
+  }
+
+  withRouter(opts, async (client) => {
+    const list = await client.getBlockedDevices()
+    const norm = (m) => m.replace(/[:-]/g, '').toUpperCase()
+    const dev = list.find((d) => norm(d.mac) === norm(mac))
+    if (!dev) {
+      console.log(`\n  ${c('yellow', `Dispositivo ${mac} no está en la lista de denegados`)}`)
+      console.log(`  ${c('dim', 'Bloqueados actualmente:')}`)
+      if (list.length === 0) console.log(`  ${c('dim', '  (ninguno)')}`)
+      for (const d of list) console.log(`  ${c('dim', `  ${d.name} ${d.mac}`)}`)
+      return
+    }
+
+    await client.unblockDevice(mac)
+    console.log(`\n  ${c('green', '✅')} Dispositivo desbloqueado: ${c('bold', dev.name || mac)}`)
+    console.log()
+  })
+}
+
 function prompt(text) {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   return new Promise((resolve) => {
@@ -290,9 +436,13 @@ USO:
 COMANDOS:
   status                Estado general del router
   clients               Lista de dispositivos conectados
+  identify              Cruzar MAC con Home Assistant para identificar dispositivos
+  export [--output f]   Exportar clientes en JSON (stdout o archivo)
   wifi [status]         Estado de las bandas WiFi
   wifi on|off           Encender/apagar una banda (pide banda o usa --band)
   rename <MAC> <nombre> Renombrar un dispositivo (ej: router rename E4-AE-E4-5A-E2-4B EnchufeCocina)
+  block <MAC>            Bloquear un dispositivo (pide confirmación)
+  unblock <MAC>          Desbloquear un dispositivo de la lista de denegados
   reboot                Reiniciar el router
 
 OPCIONES:
@@ -356,6 +506,14 @@ async function main() {
       banner('Dispositivos conectados')
       clientsCommand(opts)
       break
+    case 'identify':
+      banner('Identificar dispositivos')
+      identifyCommand(opts)
+      break
+    case 'export':
+      banner('Exportar clientes')
+      exportCommand(opts)
+      break
     case 'wifi':
       banner('WiFi')
       await wifiCommand({ ...opts, action: sub })
@@ -363,6 +521,14 @@ async function main() {
     case 'rename':
       banner('Renombrar dispositivo')
       renameCommand([sub, ...opts._.slice(2)], opts)
+      break
+    case 'block':
+      banner('Bloquear dispositivo')
+      blockCommand([sub, ...opts._.slice(2)], opts)
+      break
+    case 'unblock':
+      banner('Desbloquear dispositivo')
+      unblockCommand([sub, ...opts._.slice(2)], opts)
       break
     case 'reboot':
       banner('Reinicio')

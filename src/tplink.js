@@ -136,6 +136,50 @@ export class TplinkRouterClient {
     })
   }
 
+  async getBlockedDevices() {
+    const list = await this.request('admin/access_control?form=black_list', { operation: 'load' })
+    return list || []
+  }
+
+  async blockDevice(mac) {
+    const status = await this.getStatus()
+    const device = (status.devices || []).find((d) => d.macaddr === mac)
+    if (!device) throw new TplinkRouterError(`Dispositivo ${mac} no encontrado entre los conectados`)
+
+    const entry = {
+      key: mac.replace(/-/g, ''),
+      deviceType: device.deviceType || device.type || 'Computer',
+      name: device.hostname || mac,
+      mac,
+      ipaddr: device.ipaddr || '0.0.0.0',
+      conn_type: device.type === 'wired' ? 'wired' : 'wireless',
+      host: 'NOT HOST',
+    }
+    const data = encodeURIComponent(JSON.stringify([entry]))
+
+    await this.request('admin/access_control?form=black_devices', {
+      operation: 'block',
+      data,
+      index: '0',
+      key: mac.replace(/-/g, ''),
+    })
+  }
+
+  async unblockDevice(mac) {
+    const list = await this.getBlockedDevices()
+    const norm = (m) => m.replace(/[:-]/g, '').toUpperCase()
+    const idx = list.findIndex((d) => norm(d.mac) === norm(mac))
+    if (idx === -1) throw new TplinkRouterError(`Dispositivo ${mac} no está en la lista de denegados`)
+
+    const dev = list[idx]
+    const key = dev.key || mac.replace(/-/g, '')
+    await this.request('admin/access_control?form=black_list', {
+      operation: 'remove',
+      key,
+      index: String(idx),
+    })
+  }
+
   async reboot() {
     await this.request('admin/system?form=reboot', { operation: 'write' }, true)
   }
