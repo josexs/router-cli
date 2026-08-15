@@ -1,0 +1,16 @@
+{
+  "name": "router-cli",
+  "version": "1.0.0",
+  "description": "CLI para controlar el router TP-Link AX3000 desde la terminal",
+  "type": "module",
+  "bin": {
+    "router": "./bin/router-cli.js"
+  },
+  "scripts": {
+    "start": "node bin/router-cli.js",
+    "link": "npm link"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
