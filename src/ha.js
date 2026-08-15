@@ -14,12 +14,13 @@ export function loadHaConfig() {
       if (m && !env[m[1]]) env[m[1]] = m[2]
     }
   }
-  return { token: env.HA_TOKEN, url: env.HA_URL || 'https://URL_REMOVED' }
+  return { token: env.HA_TOKEN, url: env.HA_URL }
 }
 
 export async function fetchHaDevices() {
   const { token, url } = loadHaConfig()
   if (!token) return { ok: false, reason: 'Falta HA_TOKEN en .env', devices: [] }
+  if (!url) return { ok: false, reason: 'Falta HA_URL en .env', devices: [] }
 
   const wsUrl = url.replace(/^https/, 'wss').replace(/^http/, 'ws') + '/api/websocket'
   return new Promise((resolve) => {

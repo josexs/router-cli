@@ -36,7 +36,7 @@ ROUTER_USERNAME=            # vacío si tu router no usa usuario
 `router identify` cruza las MAC de tus clientes con el registro de dispositivos de Home Assistant. Necesitas un token de HA (Perfil → Tokens de acceso de larga duración):
 
 ```env
-HA_URL=https://URL_REMOVED
+HA_URL=https://tu-hass.ejemplo.com
 HA_TOKEN=eyJhbGciOiJIUzI1NiIs...
 ```
 
