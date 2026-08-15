@@ -236,6 +236,39 @@ function rebootCommand(opts) {
   })
 }
 
+function renameCommand(args, opts) {
+  const mac = (args[0] || '').toUpperCase()
+  const alias = args[1]
+
+  if (!mac || !alias) {
+    errorAndExit('Uso: router rename <MAC> <nombre>')
+  }
+  if (!/^[0-9A-F]{2}(-[0-9A-F]{2}){5}$/.test(mac)) {
+    errorAndExit(`MAC inválida: ${mac} (usa formato XX-XX-XX-XX-XX-XX)`)
+  }
+
+  withRouter(opts, async (client) => {
+    const status = await client.getStatus()
+    const devices = status.devices || []
+    const dev = devices.find((d) => d.macaddr === mac)
+    if (!dev) {
+      console.log(`\n  ${c('yellow', `Dispositivo ${mac} no encontrado entre los conectados`)}`)
+      console.log(`  ${c('dim', 'Prueba con router clients para ver las MAC disponibles')}`)
+      return
+    }
+
+    const ans = await prompt(`  ¿Renombrar "${c('bold', dev.hostname || mac)}" → "${c('bold', alias)}"? ${c('dim', '(y/N)')} `)
+    if (!ans || !['y', 'Y', 'yes'].includes(ans.trim())) {
+      console.log(`\n  ${c('yellow', 'Cancelado')}`)
+      return
+    }
+
+    await client.renameDevice(mac, alias)
+    console.log(`\n  ${c('green', '✅')} Dispositivo renombrado a "${c('bold', alias)}"`)
+    console.log()
+  })
+}
+
 function prompt(text) {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   return new Promise((resolve) => {
@@ -256,6 +289,7 @@ COMANDOS:
   clients               Lista de dispositivos conectados
   wifi [status]         Estado de las bandas WiFi
   wifi on|off           Encender/apagar una banda (pide banda o usa --band)
+  rename <MAC> <nombre> Renombrar un dispositivo (ej: router rename E4-AE-E4-5A-E2-4B EnchufeCocina)
   reboot                Reiniciar el router
 
 OPCIONES:
@@ -322,6 +356,10 @@ async function main() {
     case 'wifi':
       banner('WiFi')
       await wifiCommand({ ...opts, action: sub })
+      break
+    case 'rename':
+      banner('Renombrar dispositivo')
+      renameCommand([sub, ...opts._.slice(2)], opts)
       break
     case 'reboot':
       banner('Reinicio')

@@ -128,6 +128,14 @@ export class TplinkRouterClient {
     })
   }
 
+  async renameDevice(mac, alias) {
+    await this.request('admin/traffic?form=dev_name', {
+      operation: 'write',
+      mac,
+      alias,
+    })
+  }
+
   async reboot() {
     await this.request('admin/system?form=reboot', { operation: 'write' }, true)
   }
